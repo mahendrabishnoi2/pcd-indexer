@@ -166,19 +166,6 @@ class IndexedPointCloudConfig:
         }
 
 
-# class PointAttributeAbbr(Enum):
-#     Position = "p"
-#     Color = "c"
-#     IntensityColor = "i"
-#     ColorMapping = "cm"
-#     VelocityColor = "V"
-#     OriginalVelocity = "ov"
-#     OriginalIntensity = "oi"
-#     LabelKey = "l"
-#     Index = "idx"
-#     ApcAddress = "aa"
-
-
 class PointAddressType:
     def __init__(self, point_3d_index: int, fragment_index: int, fragment_key: str, fragment_number: int):
         self.point_3d_index = point_3d_index
@@ -356,7 +343,7 @@ def parse_point_cloud(file_name):
     if file_name == '15M_pcd.pcd':
         row_size, column_size, stack_size = 10, 10, 5
 
-    levels = [1, 13, 26]
+    levels = [1, 2, 5]
     spatial_data: SpatialData = SpatialData(config=None, fragments={})
     fragments_meta = {}
     # total_lines = get_total_lines(file_name)
@@ -448,14 +435,9 @@ def parse_point_cloud(file_name):
 
                 fragment_key = f"{fragment_x}_{fragment_y}_{fragment_z}"
                 base_level = levels[0]
-                points_data = get_levels_that_cover_this_point(
-                    fragments_meta,
-                    levels,
-                    fragment_key,
-                    base_level
-                )
                 applicable_levels = get_levels_that_cover_this_point(fragments_meta, levels, fragment_key, base_level)
-                save_point_to_file(random_dir_for_intermediate_pcd_files, fragment_key, applicable_levels, line)
+                if len(applicable_levels) > 0:
+                    save_point_to_file(random_dir_for_intermediate_pcd_files, fragment_key, applicable_levels, line)
                 populate_point_attrs_in_levels(
                     spatial_data.fragments,
                     point_attributes,
@@ -468,6 +450,7 @@ def parse_point_cloud(file_name):
     if pbar is not None:
         pbar.close()
 
+    return
     if True:
         random_file_name = 'pcdFile_' + str(random_number)
 
@@ -547,17 +530,19 @@ def get_levels_that_cover_this_point(
         base_level: int
 ):
     selected_levels = []
-    if fragment_key not in fragments:
+    base_level_fragment_key = f"{fragment_key}_{base_level}"
+    if base_level_fragment_key not in fragments:
         for level in levels_to_apply:
             fragments[f"{fragment_key}_{level}"] = {'count': 0}
     for level in levels_to_apply:
-        base_level_fragment_key = f"{fragment_key}_{base_level}"
+        current_level_fragment_key = f"{fragment_key}_{level}"
 
         # if level is n, then only select every nth point in this fragment
         # i.e. only if count in base level % curr_level == 0
         if fragments[base_level_fragment_key]['count'] % level != 0:
             continue
         selected_levels.append(level)
+        fragments[current_level_fragment_key]['count'] = fragments[current_level_fragment_key]['count'] + 1
 
     return selected_levels
 
