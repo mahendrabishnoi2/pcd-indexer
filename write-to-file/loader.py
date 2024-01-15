@@ -10,6 +10,9 @@ from typing import Dict, Optional, List, Union, Tuple, Any
 import tqdm
 from enum import Enum
 
+min_x, min_z, min_y = math.inf, math.inf, math.inf
+max_x, max_z, max_y = -math.inf, -math.inf, -math.inf
+
 
 class FileManager:
     def __init__(self):
@@ -25,6 +28,10 @@ class FileManager:
     def close(self):
         for file in self.files.values():
             file.close()
+
+    def flush(self):
+        for file in self.files.values():
+            file.flush()
 
 
 file_manager: Optional[FileManager] = None
@@ -332,12 +339,9 @@ def main(file_name):
 
 
 def parse_point_cloud(file_name):
+    global min_x, max_x, min_y, max_y, min_z, max_z
     headers = PCDHeaders()
     string_data = ""
-    offset: Dict[str, int] = {}
-
-    min_x, min_z, min_y = math.inf, math.inf, math.inf
-    max_x, max_z, max_y = -math.inf, -math.inf, -math.inf
 
     row_size, column_size, stack_size = 0.2, 0.2, 0.2
     if file_name == '15M_pcd.pcd':
@@ -346,20 +350,19 @@ def parse_point_cloud(file_name):
     levels = [1, 2, 5]
     spatial_data: SpatialData = SpatialData(config=None, fragments={})
     fragments_meta = {}
-    # total_lines = get_total_lines(file_name)
 
     pbar = None
     i = 0
     random_number = math.floor(random() * 999999999)
-    generated_data_dir = '../generated-data/'
-    random_dir_for_intermediate_pcd_files = generated_data_dir + 'intermediate_pcd_files_' + str(random_number)
+    generated_data_dir = '../generated-data'
+    random_dir_for_intermediate_pcd_files = generated_data_dir + '/intermediate_pcd_files_' + str(random_number)
+    all_fragment_keys = set()
     with open(file_name, 'r') as original_pcd_file:
         for line in original_pcd_file:
             if headers.points is None:
                 string_data += line + '\n'
                 if line.find('DATA') != -1:
                     headers = parse_pcd_headers(string_data)
-                    offset = headers.offset
                     print(f'File {file_name}\nTotal Points: {headers.points}\nFields: {", ".join(headers.fields)}')
                     print('Fragmenting the PCD File...')
                     pbar = tqdm.tqdm(total=headers.points, unit=' line')
@@ -367,66 +370,8 @@ def parse_point_cloud(file_name):
                 pbar.update(1)
                 if line == '':
                     continue
-                line_arr = line.split()
 
-                point_attributes: PointAttributes = PointAttributes()
-                if 'x' in offset:
-                    x = float(line_arr[offset['x']])
-                    y = float(line_arr[offset['y']])
-                    z = float(line_arr[offset['z']])
-
-                    if not (math.isnan(x) or math.isnan(y) or math.isnan(z)):
-                        min_x = x if x < min_x else min_x
-                        min_y = y if y < min_y else min_y
-                        min_z = z if z < min_z else min_z
-
-                        max_x = x if x > max_x else max_x
-                        max_y = y if y > max_y else max_y
-                        max_z = z if z > max_z else max_z
-                        point_attributes.index = i
-                        point_attributes.position = [x, y, z]
-                    else:
-                        continue
-
-                if 'v' in offset:
-                    # todo: add code for velocity color
-                    pass
-
-                if 'label' in offset:
-                    # todo: add code for label
-                    pass
-
-                if 'label_key' in offset:
-                    # todo: add code for label_key
-                    pass
-
-                if 'rgb' in offset:
-                    # todo: fix inaccuracy in packing, unpacking
-                    packed_data = struct.pack('f', float(line_arr[offset['rgb']]))
-                    unpacked_data = struct.unpack('bbbb', packed_data)
-                    # print(line_arr[offset['rgb']], float(line_arr[offset['rgb']]), packed_data, unpacked_data)
-                    # raise Exception('stop')
-                    r, g, b, _ = unpacked_data
-                    point_attributes.color = (
-                        round((r / 255) * 10) / 10,
-                        round((g / 255) * 10) / 10,
-                        round((b / 255) * 10) / 10,
-                    )
-                else:
-                    point_attributes.color = (1, 1, 1)
-
-                if 'intensity' in offset or 'reflectivity' in offset:
-                    # Create and push alpha wrt intensity
-                    alpha_value = float(offset.get('intensity', offset.get('reflectivity')))
-                    alpha_value = alpha_value / 255 if alpha_value > 1 else alpha_value
-                    point_attributes.intensity_color = check_for_valid_alpha_value_and_add_intensity_color(alpha_value)
-                    point_attributes.original_intensity = float(line_arr[offset['intensity']])
-
-                if 'r' in offset and 'g' in offset and 'b' in offset:
-                    r = float(line_arr[offset['r']]) / 255
-                    g = float(line_arr[offset['g']]) / 255
-                    b = float(line_arr[offset['b']]) / 255
-                    point_attributes.color_mapping = (r, g, b)
+                point_attributes = parse_point(line, headers, i)
 
                 px, py, pz = point_attributes.position
                 fragment_x = math.floor(px / column_size)
@@ -434,60 +379,114 @@ def parse_point_cloud(file_name):
                 fragment_z = math.floor(pz / stack_size)
 
                 fragment_key = f"{fragment_x}_{fragment_y}_{fragment_z}"
+                all_fragment_keys.add(fragment_key)
                 base_level = levels[0]
                 applicable_levels = get_levels_that_cover_this_point(fragments_meta, levels, fragment_key, base_level)
                 if len(applicable_levels) > 0:
-                    save_point_to_file(random_dir_for_intermediate_pcd_files, fragment_key, applicable_levels, line)
-                populate_point_attrs_in_levels(
-                    spatial_data.fragments,
-                    point_attributes,
-                    levels,
-                    fragment_key,
-                    base_level
-                )
-        i += 1
+                    save_point_to_file(random_dir_for_intermediate_pcd_files, fragment_key, applicable_levels, line, i)
+            i += 1
 
     if pbar is not None:
         pbar.close()
+    file_manager.flush()
 
-    return
-    if True:
-        random_file_name = 'pcdFile_' + str(random_number)
+    # now that we have assigned levels to points and divided in fragments, we'll go through all the fragment files and
+    # convert those to required json format
+    # fetch all files
+    all_paths_in_intermediate_dir = os.listdir(random_dir_for_intermediate_pcd_files)
+    files_in_intermediate_dir = []
+    for path in all_paths_in_intermediate_dir:
+        full_path = random_dir_for_intermediate_pcd_files + '/' + path
+        if os.path.isfile(full_path):
+            files_in_intermediate_dir.append(full_path)
 
-        fragment_keys = spatial_data.fragments.keys()
-        print(f'file fragmented successfully, {len(fragment_keys)} fragments were created')
-        print('saving fragments to disk')
-        pbar = tqdm.tqdm(total=len(fragment_keys), unit=' fragment')
+    new_keys = {}
+    dir_for_final_files = f"{generated_data_dir}/final_pcd_files_{random_number}"
+    for file in tqdm.tqdm(files_in_intermediate_dir):
+        fragments: Dict[str, LevelledIndexedGeometryAttributesData] = {}
+        with open(file) as f:
+            for line in f:
+                line_arr = line.split(' ', 3)
+                fragment_key = line_arr[0]
+                point_levels = list(map(int, line_arr[1].split(',')))
+                point_index = int(line_arr[2])
+                point_data = line_arr[3]
 
+                if fragment_key not in fragments:
+                    fragments[fragment_key] = LevelledIndexedGeometryAttributesData(levels={}, count=0)
+                fragments[fragment_key].count += 1
+
+                for point_level in point_levels:
+                    current_level = str(point_level)
+                    if str(current_level) not in fragments[fragment_key].levels:
+                        fragments[fragment_key].levels[str(current_level)] = IndexedGeometryAttributesData(
+                            indices=[],
+                            apc_addresses=[],
+                            count=0,
+                            position=[],
+                            pcd_color=[],
+                            original_color=[],
+                            intensity_color=[],
+                            velocity_color=[],
+                            original_velocity_values=[],
+                            color_mapping=[],
+                            original_intensity_values=[],
+                            label_key=[]
+                        )
+
+                point_attrs = parse_point(point_data, headers, point_index)
+                fragments[fragment_key].levels[current_level].count += 1
+                if point_attrs.index is not None:
+                    fragments[fragment_key].levels[current_level].indices.append(point_attrs.index)
+                if point_attrs.position is not None:
+                    fragments[fragment_key].levels[current_level].position.extend(point_attrs.position)
+                if point_attrs.color is not None:
+                    fragments[fragment_key].levels[current_level].pcd_color.extend(point_attrs.color)
+                if point_attrs.intensity_color is not None:
+                    fragments[fragment_key].levels[current_level].intensity_color.extend(point_attrs.intensity_color)
+                if point_attrs.original_intensity is not None:
+                    fragments[fragment_key].levels[current_level].original_intensity_values.append(
+                        point_attrs.original_intensity)
+                if point_attrs.color_mapping is not None:
+                    fragments[fragment_key].levels[current_level].color_mapping.extend(point_attrs.color_mapping)
+                if point_attrs.velocity_color is not None:
+                    fragments[fragment_key].levels[current_level].velocity_color.extend(point_attrs.velocity_color)
+                if point_attrs.original_velocity is not None:
+                    fragments[fragment_key].levels[current_level].original_velocity_values.append(
+                        point_attrs.original_velocity)
+                if point_attrs.label_key is not None:
+                    fragments[fragment_key].levels[current_level].label_key.append(point_attrs.label_key)
+                if point_attrs.apc_address is not None:
+                    fragments[fragment_key].levels[current_level].apc_addresses.append(point_attrs.apc_address)
+
+        fragment_keys = fragments.keys()
         min_fragment_x = math.inf
         min_fragment_y = math.inf
         min_fragment_z = math.inf
 
-        for key in fragment_keys:
+        for key in all_fragment_keys:
             fragment_x, fragment_y, fragment_z = map(int, key.split('_'))
             min_fragment_x = fragment_x if fragment_x < min_fragment_x else min_fragment_x
             min_fragment_y = fragment_y if fragment_y < min_fragment_y else min_fragment_y
             min_fragment_z = fragment_z if fragment_z < min_fragment_z else min_fragment_z
 
-        new_keys = {}
-        fragments_done = 0
         for key in copy.deepcopy(list(fragment_keys)):
-            fragment = spatial_data.fragments[key]
+            fragment = fragments[key]
             fragment_x, fragment_y, fragment_z = map(int, key.split('_'))
             normalized_fragment_x = fragment_x - min_fragment_x
             normalized_fragment_y = fragment_y - min_fragment_y
             normalized_fragment_z = fragment_z - min_fragment_z
             new_key = f"{normalized_fragment_x}-{normalized_fragment_y}-{normalized_fragment_z}"
 
-            spatial_data.fragments[new_key] = fragment
-            del spatial_data.fragments[key]
+            fragments[new_key] = fragment
+            del fragments[key]
             levels = fragment.levels
             new_keys[new_key] = FragmentMeta(
                 count=fragment.count,
                 levels=copy.deepcopy(list(levels.keys()))
             )
 
-            dir_path = f"./pcds/{random_file_name}/{new_key}"
+            dir_path = f"{dir_for_final_files}/{new_key}"
             if not os.path.exists(dir_path):
                 os.makedirs(dir_path)
 
@@ -497,30 +496,90 @@ def parse_point_cloud(file_name):
                 with open(level_save_path, 'w') as f:
                     f.write(json.dumps(level_data.as_dict()))
                     del fragment.levels[level_key]
-            del spatial_data.fragments[new_key]
 
-            pbar.update(1)
-        pbar.close()
+    print(f"saved to {dir_for_final_files}")
+    spatial_data.config = IndexedPointCloudConfig(
+        min_x,
+        max_x,
+        min_y,
+        max_y,
+        min_z,
+        max_z,
+        0,
+        0,
+        row_size,
+        column_size,
+        stack_size,
+        0,
+        new_keys,
+        total_points=i,
+    )
+    with open(f"{dir_for_final_files}/config.json", 'w') as f:
+        f.write(json.dumps(spatial_data.config.as_json()))
 
-        print(f"saved to ./pcds/{random_file_name}")
-        spatial_data.config = IndexedPointCloudConfig(
-            min_x,
-            max_x,
-            min_y,
-            max_y,
-            min_z,
-            max_z,
-            0,
-            0,
-            row_size,
-            column_size,
-            stack_size,
-            0,
-            new_keys,
-            total_points=i,
+
+def parse_point(raw_point, headers, i):
+    global min_x, max_x, min_y, max_y, min_z, max_z
+    line_arr = raw_point.split()
+
+    point_attributes: PointAttributes = PointAttributes()
+    if 'x' in headers.offset:
+        x = float(line_arr[headers.offset['x']])
+        y = float(line_arr[headers.offset['y']])
+        z = float(line_arr[headers.offset['z']])
+
+        if not (math.isnan(x) or math.isnan(y) or math.isnan(z)):
+            min_x = x if x < min_x else min_x
+            min_y = y if y < min_y else min_y
+            min_z = z if z < min_z else min_z
+
+            max_x = x if x > max_x else max_x
+            max_y = y if y > max_y else max_y
+            max_z = z if z > max_z else max_z
+            point_attributes.index = i
+            point_attributes.position = [x, y, z]
+
+    if 'v' in headers.offset:
+        # todo: add code for velocity color
+        pass
+
+    if 'label' in headers.offset:
+        # todo: add code for label
+        pass
+
+    if 'label_key' in headers.offset:
+        # todo: add code for label_key
+        pass
+
+    if 'rgb' in headers.offset:
+        # todo: fix inaccuracy in packing, unpacking
+        packed_data = struct.pack('f', float(line_arr[headers.offset['rgb']]))
+        unpacked_data = struct.unpack('bbbb', packed_data)
+        # print(line_arr[headers.offset['rgb']], float(line_arr[headers.offset['rgb']]), packed_data, unpacked_data)
+        # raise Exception('stop')
+        r, g, b, _ = unpacked_data
+        point_attributes.color = (
+            round((r / 255) * 10) / 10,
+            round((g / 255) * 10) / 10,
+            round((b / 255) * 10) / 10,
         )
-        with open(f"./pcds/{random_file_name}/config.json", 'w') as f:
-            f.write(json.dumps(spatial_data.config.as_json()))
+    else:
+        point_attributes.color = (1, 1, 1)
+
+    if 'intensity' in headers.offset or 'reflectivity' in headers.offset:
+        # Create and push alpha wrt intensity
+        alpha_value = float(headers.offset.get('intensity', headers.offset.get('reflectivity')))
+        alpha_value = alpha_value / 255 if alpha_value > 1 else alpha_value
+        point_attributes.intensity_color = check_for_valid_alpha_value_and_add_intensity_color(alpha_value)
+        point_attributes.original_intensity = float(line_arr[headers.offset['intensity']])
+
+    if 'r' in headers.offset and 'g' in headers.offset and 'b' in headers.offset:
+        r = float(line_arr[headers.offset['r']]) / 255
+        g = float(line_arr[headers.offset['g']]) / 255
+        b = float(line_arr[headers.offset['b']]) / 255
+        point_attributes.color_mapping = (r, g, b)
+
+    return point_attributes
 
 
 def get_levels_that_cover_this_point(
@@ -547,71 +606,14 @@ def get_levels_that_cover_this_point(
     return selected_levels
 
 
-def save_point_to_file(directory, fragment_key, levels, point):
+def save_point_to_file(directory, fragment_key, levels, point, point_index):
     if not os.path.exists(directory):
         os.makedirs(directory)
 
     file_path = f"{directory}/{fragment_key}.pcd"
-    data_to_save = ",".join([str(level) for level in levels]) + " " + point
+    data_to_save = fragment_key + " " + ",".join([str(level) for level in levels]) + " " + str(
+        point_index) + " " + point
     file_manager.save_to_disk(file_path, data_to_save)
-
-
-def populate_point_attrs_in_levels(
-        fragments: Dict[str, LevelledIndexedGeometryAttributesData],
-        point_attrs: PointAttributes,
-        levels_to_apply: List[int],
-        fragment_key: str,
-        base_level: int
-):
-    if fragment_key not in fragments:
-        fragments[fragment_key] = LevelledIndexedGeometryAttributesData(levels={}, count=0)
-    fragments[fragment_key].count += 1
-
-    for j in range(len(levels_to_apply)):
-        current_level = str(levels_to_apply[j])
-        some_number = 0
-        if str(base_level) in fragments[fragment_key].levels:
-            some_number = fragments[fragment_key].levels[str(base_level)].count
-        if not some_number % int(current_level) == 0:
-            continue
-
-        if current_level not in fragments[fragment_key].levels:
-            fragments[fragment_key].levels[current_level] = IndexedGeometryAttributesData(
-                indices=[],
-                apc_addresses=[],
-                count=0,
-                position=[],
-                pcd_color=[],
-                original_color=[],
-                intensity_color=[],
-                velocity_color=[],
-                original_velocity_values=[],
-                color_mapping=[],
-                original_intensity_values=[],
-                label_key=[]
-            )
-        fragments[fragment_key].levels[current_level].count += 1
-        if point_attrs.index is not None:
-            fragments[fragment_key].levels[current_level].indices.append(point_attrs.index)
-        if point_attrs.position is not None:
-            fragments[fragment_key].levels[current_level].position.extend(point_attrs.position)
-        if point_attrs.color is not None:
-            fragments[fragment_key].levels[current_level].pcd_color.extend(point_attrs.color)
-        if point_attrs.intensity_color is not None:
-            fragments[fragment_key].levels[current_level].intensity_color.extend(point_attrs.intensity_color)
-        if point_attrs.original_intensity is not None:
-            fragments[fragment_key].levels[current_level].original_intensity_values.append(
-                point_attrs.original_intensity)
-        if point_attrs.color_mapping is not None:
-            fragments[fragment_key].levels[current_level].color_mapping.extend(point_attrs.color_mapping)
-        if point_attrs.velocity_color is not None:
-            fragments[fragment_key].levels[current_level].velocity_color.extend(point_attrs.velocity_color)
-        if point_attrs.original_velocity is not None:
-            fragments[fragment_key].levels[current_level].original_velocity_values.append(point_attrs.original_velocity)
-        if point_attrs.label_key is not None:
-            fragments[fragment_key].levels[current_level].label_key.append(point_attrs.label_key)
-        if point_attrs.apc_address is not None:
-            fragments[fragment_key].levels[current_level].apc_addresses.append(point_attrs.apc_address)
 
 
 def check_for_valid_alpha_value_and_add_intensity_color(alpha_value):
