@@ -364,7 +364,8 @@ def parse_point_cloud(file_name):
     pbar = None
     i = 0
     random_number = math.floor(random() * 999999999)
-    random_dir_for_intermediate_pcd_files = 'intermediate_pcd_files_' + str(random_number)
+    generated_data_dir = '../generated-data/'
+    random_dir_for_intermediate_pcd_files = generated_data_dir + 'intermediate_pcd_files_' + str(random_number)
     with open(file_name, 'r') as original_pcd_file:
         for line in original_pcd_file:
             if headers.points is None:
