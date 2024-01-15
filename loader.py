@@ -74,7 +74,7 @@ point_cloud_sequential_color_array = [
     '#d0e11c',
     '#e7e419',
     '#fde725',
-];
+]
 
 
 class FragmentMeta:
@@ -145,19 +145,6 @@ class IndexedPointCloudConfig:
             "keys": keys_dict,
             "total_points": self.total_points
         }
-
-
-# class PointAttributeAbbr(Enum):
-#     Position = "p"
-#     Color = "c"
-#     IntensityColor = "i"
-#     ColorMapping = "cm"
-#     VelocityColor = "V"
-#     OriginalVelocity = "ov"
-#     OriginalIntensity = "oi"
-#     LabelKey = "l"
-#     Index = "idx"
-#     ApcAddress = "aa"
 
 
 class PointAddressType:
@@ -328,7 +315,7 @@ def parse_point_cloud(file_name):
     if file_name == '15M_pcd.pcd':
         row_size, column_size, stack_size = 10, 10, 5
 
-    levels = [1, 13, 26]
+    levels = [1, 2, 5]
     spatial_data: SpatialData = SpatialData(config=None, fragments={})
 
     # total_lines = get_total_lines(file_name)
@@ -424,7 +411,7 @@ def parse_point_cloud(file_name):
                     fragment_key,
                     base_level
                 )
-        i += 1
+            i += 1
 
     if pbar is not None:
         pbar.close()
@@ -565,7 +552,7 @@ def check_for_valid_alpha_value_and_add_intensity_color(alpha_value):
     toggle wont be shown
     """
     if not math.isnan(alpha_value) and alpha_value <= 1:
-        return map((lambda color: color / 255), get_color_wrt_intensity(alpha_value))
+        return list(map((lambda color: color / 255), get_color_wrt_intensity(alpha_value)))
 
     return []
 

@@ -100,7 +100,7 @@ point_cloud_sequential_color_array = [
     '#d0e11c',
     '#e7e419',
     '#fde725',
-];
+]
 
 
 class FragmentMeta:
@@ -400,12 +400,22 @@ def parse_point_cloud(file_name):
         if os.path.isfile(full_path):
             files_in_intermediate_dir.append(full_path)
 
+    min_fragment_x = math.inf
+    min_fragment_y = math.inf
+    min_fragment_z = math.inf
+    for key in all_fragment_keys:
+        fragment_x, fragment_y, fragment_z = map(int, key.split('_'))
+        min_fragment_x = fragment_x if fragment_x < min_fragment_x else min_fragment_x
+        min_fragment_y = fragment_y if fragment_y < min_fragment_y else min_fragment_y
+        min_fragment_z = fragment_z if fragment_z < min_fragment_z else min_fragment_z
+
     new_keys = {}
     dir_for_final_files = f"{generated_data_dir}/final_pcd_files_{random_number}"
     for file in tqdm.tqdm(files_in_intermediate_dir):
         fragments: Dict[str, LevelledIndexedGeometryAttributesData] = {}
+
         with open(file) as f:
-            for line in f:
+            for line in f.readlines():
                 line_arr = line.split(' ', 3)
                 fragment_key = line_arr[0]
                 point_levels = list(map(int, line_arr[1].split(',')))
@@ -434,42 +444,34 @@ def parse_point_cloud(file_name):
                             label_key=[]
                         )
 
-                point_attrs = parse_point(point_data, headers, point_index)
-                fragments[fragment_key].levels[current_level].count += 1
-                if point_attrs.index is not None:
-                    fragments[fragment_key].levels[current_level].indices.append(point_attrs.index)
-                if point_attrs.position is not None:
-                    fragments[fragment_key].levels[current_level].position.extend(point_attrs.position)
-                if point_attrs.color is not None:
-                    fragments[fragment_key].levels[current_level].pcd_color.extend(point_attrs.color)
-                if point_attrs.intensity_color is not None:
-                    fragments[fragment_key].levels[current_level].intensity_color.extend(point_attrs.intensity_color)
-                if point_attrs.original_intensity is not None:
-                    fragments[fragment_key].levels[current_level].original_intensity_values.append(
-                        point_attrs.original_intensity)
-                if point_attrs.color_mapping is not None:
-                    fragments[fragment_key].levels[current_level].color_mapping.extend(point_attrs.color_mapping)
-                if point_attrs.velocity_color is not None:
-                    fragments[fragment_key].levels[current_level].velocity_color.extend(point_attrs.velocity_color)
-                if point_attrs.original_velocity is not None:
-                    fragments[fragment_key].levels[current_level].original_velocity_values.append(
-                        point_attrs.original_velocity)
-                if point_attrs.label_key is not None:
-                    fragments[fragment_key].levels[current_level].label_key.append(point_attrs.label_key)
-                if point_attrs.apc_address is not None:
-                    fragments[fragment_key].levels[current_level].apc_addresses.append(point_attrs.apc_address)
+                    point_attrs = parse_point(point_data, headers, point_index)
+
+                    fragments[fragment_key].levels[current_level].count += 1
+                    if point_attrs.index is not None:
+                        fragments[fragment_key].levels[current_level].indices.append(point_attrs.index)
+                    if point_attrs.position is not None:
+                        fragments[fragment_key].levels[current_level].position.extend(point_attrs.position)
+                    if point_attrs.color is not None:
+                        fragments[fragment_key].levels[current_level].pcd_color.extend(point_attrs.color)
+                    if point_attrs.intensity_color is not None:
+                        fragments[fragment_key].levels[current_level].intensity_color.extend(
+                            point_attrs.intensity_color)
+                    if point_attrs.original_intensity is not None:
+                        fragments[fragment_key].levels[current_level].original_intensity_values.append(
+                            point_attrs.original_intensity)
+                    if point_attrs.color_mapping is not None:
+                        fragments[fragment_key].levels[current_level].color_mapping.extend(point_attrs.color_mapping)
+                    if point_attrs.velocity_color is not None:
+                        fragments[fragment_key].levels[current_level].velocity_color.extend(point_attrs.velocity_color)
+                    if point_attrs.original_velocity is not None:
+                        fragments[fragment_key].levels[current_level].original_velocity_values.append(
+                            point_attrs.original_velocity)
+                    if point_attrs.label_key is not None:
+                        fragments[fragment_key].levels[current_level].label_key.append(point_attrs.label_key)
+                    if point_attrs.apc_address is not None:
+                        fragments[fragment_key].levels[current_level].apc_addresses.append(point_attrs.apc_address)
 
         fragment_keys = fragments.keys()
-        min_fragment_x = math.inf
-        min_fragment_y = math.inf
-        min_fragment_z = math.inf
-
-        for key in all_fragment_keys:
-            fragment_x, fragment_y, fragment_z = map(int, key.split('_'))
-            min_fragment_x = fragment_x if fragment_x < min_fragment_x else min_fragment_x
-            min_fragment_y = fragment_y if fragment_y < min_fragment_y else min_fragment_y
-            min_fragment_z = fragment_z if fragment_z < min_fragment_z else min_fragment_z
-
         for key in copy.deepcopy(list(fragment_keys)):
             fragment = fragments[key]
             fragment_x, fragment_y, fragment_z = map(int, key.split('_'))
@@ -623,7 +625,7 @@ def check_for_valid_alpha_value_and_add_intensity_color(alpha_value):
     toggle wont be shown
     """
     if not math.isnan(alpha_value) and alpha_value <= 1:
-        return map((lambda color: color / 255), get_color_wrt_intensity(alpha_value))
+        return list(map((lambda color: color / 255), get_color_wrt_intensity(alpha_value)))
 
     return []
 
